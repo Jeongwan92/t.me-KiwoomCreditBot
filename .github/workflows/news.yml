@@ -1,11 +1,9 @@
-YAML
 name: News Monitor Bot
 
 on:
   schedule:
-    # 매 10분마다 자동 실행
     - cron: '*/10 * * * *'
-  workflow_dispatch: # 수동으로 즉시 실행할 수 있는 버튼 활성화
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -14,20 +12,20 @@ jobs:
       contents: write
 
     steps:
-      - name: 저장소 코드 가져오기
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 파이썬 환경 설정
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 필수 라이브러리 설치
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install feedparser requests google-genai
 
-      - name: 뉴스 봇 실행
+      - name: Run news bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
@@ -35,7 +33,7 @@ jobs:
         run: |
           python bot.py
 
-      - name: 발송 이력 저장(중복 전송 방지)
+      - name: Commit and push sent links
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
