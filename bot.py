@@ -1,4 +1,3 @@
-Python
 import os
 import urllib.parse
 import feedparser
@@ -10,7 +9,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# 모니터링할 기업 리스트 (원하는 기업명으로 수정 가능)
+# 모니터링할 기업 리스트
 TARGET_COMPANIES = ["삼성전자", "SK하이닉스", "현대차"]
 
 HISTORY_FILE = "sent_links.txt"
@@ -30,7 +29,7 @@ def save_sent_link(link):
 
 def fetch_news(company):
     query = urllib.parse.quote(company)
-    rss_url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
+    rss_url = f"[https://news.google.com/rss/search?q=](https://news.google.com/rss/search?q=){query}&hl=ko&gl=KR&ceid=KR:ko"
     feed = feedparser.parse(rss_url)
     articles = []
     for entry in feed.entries[:3]:
@@ -65,7 +64,7 @@ def send_telegram(company, title, summary, link):
         f"{summary}\n\n"
         f"🔗 [원문 기사 보기]({link})"
     )
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHANNEL_ID,
         "text": message,
