@@ -35,45 +35,21 @@ def fetch_news(company):
             feed = feedparser.parse(res.content)
         return [{"title": e.title, "link": e.link} for e in feed.entries[:3]]
     except Exception as e:
-        print(f"[{company}] RSS 수집 오류: {e}")
+        print(f"[{company}] RSS 에러: {e}")
         return []
 
-def get_available_model():
-    """API 키로 사용 가능한 최신 모델명을 구글 서버에서 실시간 조회"""
+def summarize(title, company):
     if not GEMINI_API_KEY:
-        return None, "GEMINI_API_KEY 환경변수가 비어 있습니다."
+        return "- 요약 생성 실패 (API 키 누락)"
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code != 200:
-            return None, f"구글 API 인증/호출 실패 ({res.status_code}): {res.text}"
-
-        data = res.json()
-        models = [
-            m["name"] for m in data.get("models", [])
-            if "generateContent" in m.get("supportedGenerationMethods", [])
-        ]
-        if not models:
-            return None, "generateContent 지원 모델 없음"
-
-        # flash 계열 우선 탐색 후 첫 번째 지원 모델 매칭
-        for m in models:
-            if "flash" in m.lower():
-                return m, None
-        return models[0], None
-    except Exception as e:
-        return None, f"통신 오류: {str(e)}"
-
-def summarize(title, company, model_name):
     prompt_text = (
         f"기업명: {company}\n기사 제목: {title}\n\n"
-        "위 뉴스의 핵심 내용과 기업/시장에 미치는 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 요약해줘. "
+        "위 뉴스의 핵심 내용과 기업/시장에 미치는 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 작성해줘. "
         "서두, 인사말, 부가 설명 없이 3개 요약 행만 바로 출력해."
     )
 
-    clean_model = model_name if model_name.startswith("models/") else f"models/{model_name}"
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/{clean_model}:generateContent?key={GEMINI_API_KEY}"
+    # 구글 공식 에러 메시지가 직접 지정한 최신 모델
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={GEMINI_API_KEY}"
     payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
 
     try:
@@ -85,13 +61,12 @@ def summarize(title, company, model_name):
                 parts = candidates[0].get("content", {}).get("parts", [])
                 if parts and "text" in parts[0]:
                     return parts[0]["text"].strip()
-                return f"- 요약 차단됨 (사유: {candidates[0].get('finishReason')})"
-            return "- 요약 응답이 비어 있습니다."
+            return "- 요약 내용이 비어 있습니다."
         else:
             err_msg = data.get("error", {}).get("message", res.text)
             return f"- API 오류 ({res.status_code}): {err_msg}"
     except Exception as e:
-        return f"- 요청 통신 오류: {str(e)}"
+        return f"- 통신 오류: {str(e)}"
 
 def send_to_channel(company, title, summary, link):
     safe_title = title.replace("<", "<").replace(">", ">").replace("&", "&")
@@ -109,7 +84,7 @@ def send_to_channel(company, title, summary, link):
         "chat_id": TELEGRAM_CHANNEL_ID,
         "text": message,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True  # 구글 로고 이미지 박스 완전히 제거
+        "disable_web_page_preview": True
     }
     try:
         requests.post(msg_url, json=payload, timeout=10)
@@ -118,17 +93,11 @@ def send_to_channel(company, title, summary, link):
 
 def main():
     sent = load_sent_links()
-    model_name, err = get_available_model()
-
     for company in TARGET_COMPANIES:
         articles = fetch_news(company)
         for item in reversed(articles):
             if item["link"] not in sent:
-                if model_name:
-                    sm = summarize(item["title"], company, model_name)
-                else:
-                    sm = f"- 요약 불가: {err}"
-
+                sm = summarize(item["title"], company)
                 send_to_channel(company, item["title"], sm, item["link"])
                 save_sent_link(item["link"])
                 sent.add(item["link"])
