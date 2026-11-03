@@ -23,15 +23,24 @@ def save_sent_link(link):
         f.write(link + "\n")
 
 def get_og_image(url):
+    """실제 원문 기사 페이지로 이동하여 og:image를 추출"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
+        session = requests.Session()
+        r = session.get(url, headers=headers, timeout=8, allow_redirects=True)
+        # 구글 로고 이미지 필터링
         m = re.search(r'property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']', r.text)
         if not m:
             m = re.search(r'content=["\']([^"\']+)["\'][^>]*property=["\']og:image["\']', r.text)
-        return m.group(1) if m else None
+        if m:
+            img_url = m.group(1)
+            if "google" not in img_url.lower():
+                return img_url
     except:
-        return None
+        pass
+    return None
 
 def fetch_news(company):
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -50,24 +59,30 @@ def fetch_news(company):
         return []
 
 def summarize(title, company):
+    if not GEMINI_API_KEY:
+        print(f"[{company}] GEMINI_API_KEY가 비어 있습니다!")
+        return "- 요약 생성 일시 지연 (원문 링크 참조)"
+
     prompt_text = (
         f"기업명: {company}\n기사 제목: {title}\n\n"
-        "위 뉴스의 핵심 내용과 시장 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 요약해줘. "
-        "서두나 인사 없이 3줄 요약만 출력해."
+        "위 뉴스의 핵심 내용과 기업/시장 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 작성해줘. "
+        "서두나 부가 설명 없이 3줄 요약 내용만 출력해."
     )
-    models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
+    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
     for m in models:
         endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={GEMINI_API_KEY}"
         payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
         try:
-            res = requests.post(endpoint, json=payload, timeout=15)
-            data = res.json()
+            res = requests.post(endpoint, json=payload, timeout=12)
             if res.status_code == 200:
+                data = res.json()
                 return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            print(f"[{company}] {m} 에러: {data.get('error', {}).get('message', res.text)}")
+            else:
+                print(f"[{company}] {m} 에러코드 {res.status_code}: {res.text}")
         except Exception as e:
-            print(f"[{company}] {m} 통신 예외: {e}")
+            print(f"[{company}] {m} 호출 예외: {e}")
         time.sleep(1)
+        
     return "- 요약 생성 일시 지연 (원문 링크 참조)"
 
 def send_to_channel(company, title, summary, link):
@@ -80,6 +95,8 @@ def send_to_channel(company, title, summary, link):
         f'🔗 <a href="{link}">기사 원문 바로가기</a>'
     )
     img = get_og_image(link)
+    
+    # 구글 기본 로고가 아닌 유효한 기사 이미지일 때만 사진 카드 전송
     if img:
         photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         data = {"chat_id": TELEGRAM_CHANNEL_ID, "photo": img, "caption": text, "parse_mode": "HTML"}
@@ -89,8 +106,10 @@ def send_to_channel(company, title, summary, link):
                 return
         except:
             pass
+
+    # 이미지가 없거나 구글 로고일 땐 텍스트 형태로 깔끔하게 링크 포함 전송
     msg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"}
+    data = {"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": False}
     requests.post(msg_url, json=data, timeout=10)
 
 def main():
