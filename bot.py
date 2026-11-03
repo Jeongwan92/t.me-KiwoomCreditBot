@@ -39,7 +39,7 @@ def fetch_news(company):
         return []
 
 def get_real_available_models():
-    """현재 API 키로 호출 가능한 구글 실시간 모델 목록 조회 (404 원천 차단)"""
+    """현재 API 키로 호출 가능한 구글 실시간 모델 목록 조회"""
     if not GEMINI_API_KEY:
         return []
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
@@ -56,7 +56,6 @@ def get_real_available_models():
                         valid.append(name.replace("models/", ""))
                     else:
                         valid.append(name)
-            # flash 계열 우선 정렬
             flash_models = [m for m in valid if "flash" in m.lower()]
             other_models = [m for m in valid if "flash" not in m.lower()]
             return flash_models + other_models
@@ -90,7 +89,6 @@ def summarize(title, company, models_list):
                     if parts and "text" in parts[0]:
                         return parts[0]["text"].strip()
             elif res.status_code in [503, 429]:
-                # 과부하나 레이트리밋 발생 시 다음 활성 모델로 즉시 전환
                 last_error = f"{model} 과부하({res.status_code})"
                 time.sleep(2)
                 continue
@@ -105,8 +103,9 @@ def send_to_channel(company, title, summary, link):
     safe_title = title.replace("<", "<").replace(">", ">").replace("&", "&")
     safe_summary = summary.replace("<", "<").replace(">", ">")
 
+    # '실시간 마켓 브리프' 문구 제거 완료
     message = (
-        f"🏢 <b>[{company}] 실시간 마켓 브리프</b>\n\n"
+        f"🏢 <b>[{company}]</b>\n\n"
         f"📌 <b>{safe_title}</b>\n\n"
         f"{safe_summary}\n\n"
         f'🔗 <a href="{link}">기사 원문 바로가기</a>'
@@ -127,7 +126,7 @@ def send_to_channel(company, title, summary, link):
 def main():
     sent = load_sent_links()
     active_models = get_real_available_models()
-    print(f"현재 계정 가용 모델: {active_models}")
+    print(f"현재 가용 모델: {active_models}")
 
     for company in TARGET_COMPANIES:
         articles = fetch_news(company)
@@ -137,7 +136,6 @@ def main():
                 send_to_channel(company, item["title"], sm, item["link"])
                 save_sent_link(item["link"])
                 sent.add(item["link"])
-                # 429 방지를 위한 딜레이
                 time.sleep(12)
 
 main()
