@@ -55,9 +55,9 @@ def summarize_news(title, company):
 """
     try:
         response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
+    model="gemini-3.8-flash",
+    contents=prompt,
+)
         return response.text.strip()
     except Exception as err:
         return f"- 요약 생성 실패 ({err})"
