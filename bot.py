@@ -25,14 +25,25 @@ def save_sent_link(link):
         f.write(link + "\n")
 
 def fetch_news(company):
-    query = urllib.parse.quote(company)
+    # 구글 뉴스에서 '최근 1시간(when:1h)' 기사를 최신순 정렬하여 수집
+    query = urllib.parse.quote(f"{company} when:1h")
     rss_url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
+    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    
     try:
         resp = requests.get(rss_url, headers=headers, timeout=10)
         feed = feedparser.parse(resp.content)
+        
+        # 만약 1시간 이내 기사가 없다면 최근 1일(when:1d) 최신순으로 대체
+        if not feed.entries:
+            query_1d = urllib.parse.quote(f"{company} when:1d")
+            rss_url_1d = f"https://news.google.com/rss/search?q={query_1d}&hl=ko&gl=KR&ceid=KR:ko"
+            resp = requests.get(rss_url_1d, headers=headers, timeout=10)
+            feed = feedparser.parse(resp.content)
+
         articles = []
         for entry in feed.entries[:3]:
             articles.append({"title": entry.title, "link": entry.link})
@@ -52,6 +63,7 @@ def summarize_news(title, company):
 2. 개조식(- 형태)으로 4줄 이내로 핵심 사실만 정리할 것.
 3. 군더더기 서두나 결론 문구 없이 요약 내용만 출력할 것.
 """
+    # 503 트래픽 과부하 방지를 위한 모델 재시도 로직
     candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
     for model_name in candidate_models:
         for attempt in range(2):
@@ -65,12 +77,13 @@ def summarize_news(title, company):
             except Exception as err:
                 print(f"[{company}] {model_name} 호출 오류 (재시도 {attempt+1}): {err}")
                 time.sleep(2)
+                
     return "- 요약 생성 일시 지연 (원문 링크 참조)"
 
 def send_telegram(company, title, summary, link):
     safe_title = title.replace("*", "").replace("_", "")
     message = (
-        f"📢 *[{company}] 최신 뉴스*\n\n"
+        f"📢 *[{company}] 실시간 속보*\n\n"
         f"📌 *{safe_title}*\n\n"
         f"{summary}\n\n"
         f"🔗 [원문 기사 보기]({link})"
@@ -89,20 +102,20 @@ def send_telegram(company, title, summary, link):
         print(f"[{company}] 전송 실패: {e}")
 
 def main():
-    print(f"=== 뉴스 봇 시작 (채널: {TELEGRAM_CHANNEL_ID}) ===")
+    print(f"=== 실시간 뉴스 모니터링 시작 (채널: {TELEGRAM_CHANNEL_ID}) ===")
     sent_links = load_sent_links()
     print(f"기존 저장된 링크 수: {len(sent_links)}")
 
     for company in TARGET_COMPANIES:
-        print(f"[{company}] 뉴스 수집 시작...")
+        print(f"[{company}] 실시간 뉴스 수집 중...")
         news_items = fetch_news(company)
-        print(f"[{company}] 수집 건수: {len(news_items)}건")
+        print(f"[{company}] 수집 완료: {len(news_items)}건")
 
         for item in reversed(news_items):
             link = item["link"]
             title = item["title"]
             if link not in sent_links:
-                print(f"[{company}] 신규 기사 요약 및 전송: {title}")
+                print(f"[{company}] 신규 기사 전송: {title}")
                 summary = summarize_news(title, company)
                 send_telegram(company, title, summary, link)
                 save_sent_link(link)
