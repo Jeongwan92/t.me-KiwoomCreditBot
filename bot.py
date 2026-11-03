@@ -5,16 +5,13 @@ import feedparser
 import requests
 from google import genai
 
-# GitHub Secrets 환경 변수 로드
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# 모니터링 대상 기업
 TARGET_COMPANIES = ["삼성전자", "SK하이닉스", "현대차"]
 HISTORY_FILE = "sent_links.txt"
 
-# Gemini API 클라이언트 초기화
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 def load_sent_links():
@@ -55,9 +52,7 @@ def summarize_news(title, company):
 2. 개조식(- 형태)으로 4줄 이내로 핵심 사실만 정리할 것.
 3. 군더더기 서두나 결론 문구 없이 요약 내용만 출력할 것.
 """
-    # 503 트래픽 과부하 방지를 위한 후보 모델 리스트
-    candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
-    
+    candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
     for model_name in candidate_models:
         for attempt in range(2):
             try:
@@ -70,8 +65,7 @@ def summarize_news(title, company):
             except Exception as err:
                 print(f"[{company}] {model_name} 호출 오류 (재시도 {attempt+1}): {err}")
                 time.sleep(2)
-                
-    return "- 요약 생성 일시 지연 (최신 원문 기사를 확인해주세요)"
+    return "- 요약 생성 일시 지연 (원문 링크 참조)"
 
 def send_telegram(company, title, summary, link):
     safe_title = title.replace("*", "").replace("_", "")
@@ -90,7 +84,7 @@ def send_telegram(company, title, summary, link):
     }
     try:
         res = requests.post(url, json=payload, timeout=10)
-        print(f"[{company}] 텔레그램 발송 결과: {res.status_code}")
+        print(f"[{company}] 텔레그램 전송 결과: {res.status_code}")
     except Exception as e:
         print(f"[{company}] 전송 실패: {e}")
 
@@ -100,11 +94,22 @@ def main():
     print(f"기존 저장된 링크 수: {len(sent_links)}")
 
     for company in TARGET_COMPANIES:
-        print(f"[{company}] 뉴스 수집 중...")
+        print(f"[{company}] 뉴스 수집 시작...")
         news_items = fetch_news(company)
-        print(f"[{company}] 수집 완료: {len(news_items)}건")
+        print(f"[{company}] 수집 건수: {len(news_items)}건")
 
         for item in reversed(news_items):
             link = item["link"]
             title = item["title"]
-            if link not
+            if link not in sent_links:
+                print(f"[{company}] 신규 기사 요약 및 전송: {title}")
+                summary = summarize_news(title, company)
+                send_telegram(company, title, summary, link)
+                save_sent_link(link)
+                sent_links.add(link)
+                time.sleep(1)
+            else:
+                print(f"[{company}] 이미 발송된 기사 스킵")
+
+if __name__ == "__main__":
+    main()
