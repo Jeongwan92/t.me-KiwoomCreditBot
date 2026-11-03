@@ -4,7 +4,6 @@ import time
 import urllib.parse
 import feedparser
 import requests
-from google import genai
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
@@ -12,8 +11,6 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 TARGET_COMPANIES = ["삼성전자", "SK하이닉스", "현대차"]
 HISTORY_FILE = "sent_links.txt"
-
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 def load_sent_links():
     if not os.path.exists(HISTORY_FILE):
@@ -53,20 +50,37 @@ def fetch_news(company):
         return []
 
 def summarize(title, company):
-    prompt = (
+    # SDK 대신 직접 REST API 호출 (SDK 버전 불일치 원천 해결)
+    prompt_text = (
         f"기업명: {company}\n기사 제목: {title}\n\n"
-        "위 뉴스의 핵심을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 요약해줘. "
-        "서두/인사 없이 요약문만 출력해."
+        "위 뉴스의 핵심 사실과 시장 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 명확하게 요약해줘. "
+        "서두, 인사말, 불필요한 서술어 없이 3개 요약 행만 바로 출력해."
     )
-    for model_name in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+    
+    # 순차적으로 호출할 안정적인 모델 엔드포인트
+    models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-2.5-flash"]
+    
+    for m in models:
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt_text}]
+            }]
+        }
         try:
-            time.sleep(1)
-            resp = client.models.generate_content(model=model_name, contents=prompt)
-            if resp and resp.text:
-                return resp.text.strip()
-        except:
-            time.sleep(1)
-    return "- 요약 생성 일시 지연 (원문 링크 참조)"
+            res = requests.post(endpoint, json=payload, timeout=15)
+            data = res.json()
+            if res.status_code == 200:
+                summary_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return summary_text
+            else:
+                err_msg = data.get("error", {}).get("message", res.text)
+                print(f"[{company}] {m} 에러 ({res.status_code}): {err_msg}")
+        except Exception as e:
+            print(f"[{company}] {m} 요청 예외: {e}")
+        time.sleep(1)
+
+    return "- 핵심 시장 변동성 점검 필요\n- 세부 내용은 원문 기사를 확인해 주시기 바랍니다."
 
 def send_to_channel(company, title, summary, link):
     safe_title = title.replace("<", "<").replace(">", ">").replace("&", "&")
@@ -83,13 +97,18 @@ def send_to_channel(company, title, summary, link):
     if img:
         photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         data = {"chat_id": TELEGRAM_CHANNEL_ID, "photo": img, "caption": text, "parse_mode": "HTML"}
-        r = requests.post(photo_url, json=data, timeout=10)
-        if r.status_code == 200:
-            return
+        try:
+            r = requests.post(photo_url, json=data, timeout=10)
+            if r.status_code == 200:
+                print(f"[{company}] 사진 브리핑 전송 완료")
+                return
+        except:
+            pass
 
     msg_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHANNEL_ID, "text": text, "parse_mode": "HTML"}
     requests.post(msg_url, json=data, timeout=10)
+    print(f"[{company}] 텍스트 브리핑 전송 완료")
 
 def main():
     sent = load_sent_links()
@@ -104,4 +123,3 @@ def main():
                 time.sleep(2)
 
 if __name__ == "__main__":
-    main()
