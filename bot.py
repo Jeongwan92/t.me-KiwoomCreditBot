@@ -66,7 +66,7 @@ def summarize(title, company):
                 return resp.text.strip()
         except:
             time.sleep(1)
-    return "- 주요 시장 변동성 요약 참조\n- 상세 사항은 원문 링크 확인"
+    return "- 요약 생성 일시 지연 (원문 링크 참조)"
 
 def send_to_channel(company, title, summary, link):
     safe_title = title.replace("<", "<").replace(">", ">").replace("&", "&")
