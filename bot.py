@@ -59,26 +59,3 @@ def fetch_news(company):
         for entry in feed.entries[:3]:
             articles.append({"title": entry.title, "link": entry.link})
         return articles
-    except Exception as e:
-        print(f"[{company}] RSS 수집 에러: {e}")
-        return []
-
-def summarize_news(title, company):
-    prompt = (
-        f"기업명: {company}\n"
-        f"기사 제목: {title}\n\n"
-        "위 기사의 핵심 배경과 기업/시장에 미치는 영향을 금융 브리핑 스타일로 요약해줘.\n"
-        "[작성 조건]\n"
-        "1. 한국어 개조식(- 형태)으로 3줄 내외로 작성할 것.\n"
-        "2. 인사말이나 부가 문구 없이 요약 본문만 바로 출력할 것."
-    )
-    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
-    for model_name in models:
-        try:
-            time.sleep(1.5)
-            response = gemini_client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-            )
-            if response and response.text:
-                return response.text
