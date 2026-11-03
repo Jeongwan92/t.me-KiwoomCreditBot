@@ -1,5 +1,4 @@
 import os
-import re
 import time
 import urllib.parse
 import feedparser
@@ -7,6 +6,7 @@ import requests
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 TARGET_COMPANIES = ["삼성전자", "SK하이닉스", "현대차"]
 HISTORY_FILE = "sent_links.txt"
@@ -33,54 +33,40 @@ def fetch_news(company):
             url_1d = f"https://news.google.com/rss/search?q={query_1d}&hl=ko&gl=KR&ceid=KR:ko"
             res = requests.get(url_1d, headers=headers, timeout=10)
             feed = feedparser.parse(res.content)
-        return [{"title": e.title, "link": e.link} for e in feed.entries[:3]]
+        # API 쿼터(분당 5회) 보호를 위해 기업당 최신 1개 기사만 선별
+        return [{"title": e.title, "link": e.link} for e in feed.entries[:1]]
     except Exception as e:
         print(f"[{company}] RSS 에러: {e}")
         return []
 
-def extract_article_lead(link):
-    """AI API 대신 기사 원문 페이지에서 핵심 문장 2~3줄 직접 추출"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+def summarize(title, company):
+    if not GEMINI_API_KEY:
+        return "- 핵심 시장 동향 점검 필요 (API 키 누락)"
+
+    prompt_text = (
+        f"기업명: {company}\n기사 제목: {title}\n\n"
+        "위 뉴스의 핵심 내용과 시장 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 요약해줘. "
+        "인사말이나 서두 없이 3개 요약 행만 바로 출력해."
+    )
+
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={GEMINI_API_KEY}"
+    payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
+
     try:
-        session = requests.Session()
-        res = session.get(link, headers=headers, timeout=5, allow_redirects=True)
-        html = res.text
-
-        # meta description(기사 요약문) 우선 추출
-        m_desc = re.search(r'<meta[^>]+(?:name|property)=["\'](?:og:description|description)["\'][^>]+content=["\']([^"\']+)["\']', html, re.IGNORECASE)
-        if not m_desc:
-            m_desc = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:name|property)=["\'](?:og:description|description)["\']', html, re.IGNORECASE)
-
-        if m_desc:
-            desc = m_desc.group(1).strip()
-            # 구글 뉴스 기본 안내문구 제외
-            if desc and "Google" not in desc and len(desc) > 20:
-                # 문장 단위로 분리하여 2~3개 불릿으로 변환
-                sentences = [s.strip() for s in re.split(r'(?<=[.?!])\s+', desc) if len(s.strip()) > 5]
-                if sentences:
-                    return "\n".join([f"- {s}" for s in sentences[:3]])
-                return f"- {desc}"
-
-        # description이 없을 경우 본문 <p> 태그에서 텍스트 수집
-        paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', html, re.DOTALL | re.IGNORECASE)
-        clean_paras = []
-        for p in paragraphs:
-            text = re.sub(r'<[^>]+>', '', p).strip()
-            text = re.sub(r'\s+', ' ', text)
-            if len(text) > 30 and not any(bad in text for bad in ["기자", "무단전재", "저작권", "구독"]):
-                clean_paras.append(text)
-            if len(clean_paras) >= 2:
-                break
-
-        if clean_paras:
-            return "\n".join([f"- {p}" for p in clean_paras[:2]])
-
-    except Exception:
-        pass
-
-    return "- 기사 본문 주요 내용 및 세부 공시는 링크를 참조하세요."
+        res = requests.post(endpoint, json=payload, timeout=20)
+        data = res.json()
+        if res.status_code == 200:
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts and "text" in parts[0]:
+                    return parts[0]["text"].strip()
+            return "- 요약 생성 실패 (응답 공백)"
+        else:
+            err_msg = data.get("error", {}).get("message", res.text)
+            return f"- API 오류 ({res.status_code}): {err_msg}"
+    except Exception as e:
+        return f"- 통신 오류: {str(e)}"
 
 def send_to_channel(company, title, summary, link):
     safe_title = title.replace("<", "<").replace(">", ">").replace("&", "&")
@@ -111,10 +97,11 @@ def main():
         articles = fetch_news(company)
         for item in reversed(articles):
             if item["link"] not in sent:
-                content = extract_article_lead(item["link"])
-                send_to_channel(company, item["title"], content, item["link"])
+                sm = summarize(item["title"], company)
+                send_to_channel(company, item["title"], sm, item["link"])
                 save_sent_link(item["link"])
                 sent.add(item["link"])
-                time.sleep(1)
+                # 분당 호출 제한(RPM 5회)을 넘지 않도록 14초 대기
+                time.sleep(14)
 
 main()
