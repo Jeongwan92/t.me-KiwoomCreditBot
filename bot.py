@@ -38,50 +38,68 @@ def fetch_news(company):
         print(f"[{company}] RSS 에러: {e}")
         return []
 
-def summarize(title, company):
+def get_real_available_models():
+    """현재 API 키로 호출 가능한 구글 실시간 모델 목록 조회 (404 원천 차단)"""
     if not GEMINI_API_KEY:
-        return "- 핵심 시장 동향 점검 필요 (API 키 누락)"
+        return []
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            valid = []
+            for m in data.get("models", []):
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" in methods:
+                    name = m.get("name", "")
+                    if name.startswith("models/"):
+                        valid.append(name.replace("models/", ""))
+                    else:
+                        valid.append(name)
+            # flash 계열 우선 정렬
+            flash_models = [m for m in valid if "flash" in m.lower()]
+            other_models = [m for m in valid if "flash" not in m.lower()]
+            return flash_models + other_models
+    except Exception as e:
+        print(f"모델 조회 실패: {e}")
+    return ["gemini-1.5-flash"]
+
+def summarize(title, company, models_list):
+    if not GEMINI_API_KEY:
+        return "- API 키 설정 누락"
 
     prompt_text = (
         f"기업명: {company}\n기사 제목: {title}\n\n"
-        "위 뉴스의 핵심 내용과 기업/시장에 미치는 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 작성해줘. "
-        "인사말이나 서두 없이 3개 요약 행만 바로 출력해."
+        "위 뉴스의 핵심 배경과 기업/시장에 미치는 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 작성해줘. "
+        "서두, 인사말, 부가 설명 없이 3개 요약 행만 바로 출력해."
     )
 
-    # 503 과부하 발생 시 대체할 경량 모델 리스트
-    fallback_models = ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-1.5-flash"]
-    last_err = ""
-
-    for model in fallback_models:
+    last_error = ""
+    for model in models_list:
         endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
         payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
 
-        # 503 과부하 시 최대 3회 재시도
-        for attempt in range(3):
-            try:
-                res = requests.post(endpoint, json=payload, timeout=20)
-                data = res.json()
+        try:
+            res = requests.post(endpoint, json=payload, timeout=15)
+            data = res.json()
 
-                if res.status_code == 200:
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts and "text" in parts[0]:
-                            return parts[0]["text"].strip()
-                    return "- 요약 생성 실패 (내용 공백)"
+            if res.status_code == 200:
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and "text" in parts[0]:
+                        return parts[0]["text"].strip()
+            elif res.status_code in [503, 429]:
+                # 과부하나 레이트리밋 발생 시 다음 활성 모델로 즉시 전환
+                last_error = f"{model} 과부하({res.status_code})"
+                time.sleep(2)
+                continue
+            else:
+                last_error = f"{model} 오류({res.status_code})"
+        except Exception as e:
+            last_error = f"{model} 통신 실패({str(e)})"
 
-                # 503 (과부하) 또는 429 (레이트 리밋) 발생 시 대기 후 재시도
-                if res.status_code in [503, 429]:
-                    time.sleep(5)
-                    continue
-
-                last_err = f"API 오류 ({res.status_code})"
-                break
-            except Exception as e:
-                last_err = f"통신 오류 ({str(e)})"
-                time.sleep(3)
-
-    return f"- 요약 생성 지연 ({last_err})\n- 상세 내용은 원문 기사를 확인하세요."
+    return f"- 요약 생성 지연 ({last_error})\n- 세부 내용은 기사 링크 참조"
 
 def send_to_channel(company, title, summary, link):
     safe_title = title.replace("<", "<").replace(">", ">").replace("&", "&")
@@ -108,14 +126,18 @@ def send_to_channel(company, title, summary, link):
 
 def main():
     sent = load_sent_links()
+    active_models = get_real_available_models()
+    print(f"현재 계정 가용 모델: {active_models}")
+
     for company in TARGET_COMPANIES:
         articles = fetch_news(company)
         for item in reversed(articles):
             if item["link"] not in sent:
-                sm = summarize(item["title"], company)
+                sm = summarize(item["title"], company, active_models)
                 send_to_channel(company, item["title"], sm, item["link"])
                 save_sent_link(item["link"])
                 sent.add(item["link"])
-                time.sleep(14)
+                # 429 방지를 위한 딜레이
+                time.sleep(12)
 
 main()
