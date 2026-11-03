@@ -69,8 +69,8 @@ def summarize(title, company, models_list):
 
     prompt_text = (
         f"기업명: {company}\n기사 제목: {title}\n\n"
-        "위 뉴스의 핵심 배경과 기업/시장에 미치는 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 작성해줘. "
-        "서두, 인사말, 부가 설명 없이 3개 요약 행만 바로 출력해."
+        "위 뉴스의 핵심 내용과 기업/시장에 미치는 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 딱 2줄로 요약해줘. "
+        "서두, 인사말, 부가 설명 없이 정확히 2개 요약 행만 바로 출력해."
     )
 
     last_error = ""
@@ -103,7 +103,6 @@ def send_to_channel(company, title, summary, link):
     safe_title = title.replace("<", "<").replace(">", ">").replace("&", "&")
     safe_summary = summary.replace("<", "<").replace(">", ">")
 
-    # '실시간 마켓 브리프' 문구 제거 완료
     message = (
         f"🏢 <b>[{company}]</b>\n\n"
         f"📌 <b>{safe_title}</b>\n\n"
