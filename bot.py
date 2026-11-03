@@ -33,7 +33,6 @@ def fetch_news(company):
             url_1d = f"https://news.google.com/rss/search?q={query_1d}&hl=ko&gl=KR&ceid=KR:ko"
             res = requests.get(url_1d, headers=headers, timeout=10)
             feed = feedparser.parse(res.content)
-        # API 쿼터(분당 5회) 보호를 위해 기업당 최신 1개 기사만 선별
         return [{"title": e.title, "link": e.link} for e in feed.entries[:1]]
     except Exception as e:
         print(f"[{company}] RSS 에러: {e}")
@@ -45,28 +44,44 @@ def summarize(title, company):
 
     prompt_text = (
         f"기업명: {company}\n기사 제목: {title}\n\n"
-        "위 뉴스의 핵심 내용과 시장 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 요약해줘. "
+        "위 뉴스의 핵심 내용과 기업/시장에 미치는 영향을 금융 브리핑 스타일로 한국어 개조식(- 형태) 3줄로 작성해줘. "
         "인사말이나 서두 없이 3개 요약 행만 바로 출력해."
     )
 
-    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
+    # 503 과부하 발생 시 대체할 경량 모델 리스트
+    fallback_models = ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-1.5-flash"]
+    last_err = ""
 
-    try:
-        res = requests.post(endpoint, json=payload, timeout=20)
-        data = res.json()
-        if res.status_code == 200:
-            candidates = data.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts and "text" in parts[0]:
-                    return parts[0]["text"].strip()
-            return "- 요약 생성 실패 (응답 공백)"
-        else:
-            err_msg = data.get("error", {}).get("message", res.text)
-            return f"- API 오류 ({res.status_code}): {err_msg}"
-    except Exception as e:
-        return f"- 통신 오류: {str(e)}"
+    for model in fallback_models:
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        payload = {"contents": [{"parts": [{"text": prompt_text}]}]}
+
+        # 503 과부하 시 최대 3회 재시도
+        for attempt in range(3):
+            try:
+                res = requests.post(endpoint, json=payload, timeout=20)
+                data = res.json()
+
+                if res.status_code == 200:
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts and "text" in parts[0]:
+                            return parts[0]["text"].strip()
+                    return "- 요약 생성 실패 (내용 공백)"
+
+                # 503 (과부하) 또는 429 (레이트 리밋) 발생 시 대기 후 재시도
+                if res.status_code in [503, 429]:
+                    time.sleep(5)
+                    continue
+
+                last_err = f"API 오류 ({res.status_code})"
+                break
+            except Exception as e:
+                last_err = f"통신 오류 ({str(e)})"
+                time.sleep(3)
+
+    return f"- 요약 생성 지연 ({last_err})\n- 상세 내용은 원문 기사를 확인하세요."
 
 def send_to_channel(company, title, summary, link):
     safe_title = title.replace("<", "<").replace(">", ">").replace("&", "&")
@@ -101,7 +116,6 @@ def main():
                 send_to_channel(company, item["title"], sm, item["link"])
                 save_sent_link(item["link"])
                 sent.add(item["link"])
-                # 분당 호출 제한(RPM 5회)을 넘지 않도록 14초 대기
                 time.sleep(14)
 
 main()
